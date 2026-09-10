@@ -1,9 +1,9 @@
 import { createRequire } from "node:module";
-import fs from "node:fs";
-import path from "node:path";
 import mammoth from "mammoth";
 import type { Request, Response } from "express";
-import { z } from "zod";
+import { analyzeCustomerInput, analyzeRequirementInput, generateGuidance, getAiHealth, type StructuredAnalysis } from "../services/aiProviderService.js";
+
+export { analyzeCustomerInput };
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -36,112 +36,6 @@ export interface AnalysisResultData {
   };
 }
 
-const StructuredAnalysisSchema = z.object({
-  goal: z.string().min(1),
-  statedProblems: z.string().min(1),
-  rootProblems: z.string().min(1),
-  symptoms: z.array(z.string()).min(1),
-  evidence: z.array(z.object({ quote: z.string().min(1), interpretation: z.string().min(1) })).min(1),
-  assumptions: z.array(z.object({ title: z.string(), description: z.string(), confidence: z.number().min(0).max(100), status: z.string() })),
-  missingContext: z.array(z.object({ title: z.string(), description: z.string(), priority: z.string() })),
-  conflicts: z.array(z.object({ topic: z.string(), description: z.string(), impact: z.string() })),
-  requirements: z.array(z.object({ title: z.string(), description: z.string(), priority: z.string(), category: z.string() })),
-  confidence: z.number().min(0).max(100),
-  followUpQuestions: z.array(z.object({ question: z.string(), priority: z.string(), purpose: z.string() })).min(1),
-});
-
-type StructuredAnalysis = z.infer<typeof StructuredAnalysisSchema>;
-
-function loadBackendEnv() {
-  const envFiles = [path.resolve(process.cwd(), ".env"), path.resolve(process.cwd(), "server/.env")];
-  for (const envFile of envFiles) {
-    if (!fs.existsSync(envFile)) continue;
-    for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
-      if (!match || process.env[match[1]]) continue;
-      process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
-    }
-  }
-}
-
-function providerSettings() {
-  loadBackendEnv();
-  const provider = (process.env.AI_PROVIDER || "openai").toLowerCase();
-  const key = provider === "anthropic"
-    ? process.env.ANTHROPIC_API_KEY
-    : provider === "gemini"
-      ? process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
-      : process.env.OPENAI_API_KEY;
-  if (!key) throw new Error(`The ${provider} AI provider is not configured. Add its API key to the backend .env.`);
-  return { provider, key };
-}
-
-function analysisPrompt(inputType: string, content: string) {
-  return `Analyze this ${inputType} customer input. Return JSON only, matching this exact shape: {
-"goal": string, "statedProblems": string, "rootProblems": string, "symptoms": string[],
-"evidence": [{"quote": string, "interpretation": string}],
-"assumptions": [{"title": string, "description": string, "confidence": number, "status": string}],
-"missingContext": [{"title": string, "description": string, "priority": string}],
-"conflicts": [{"topic": string, "description": string, "impact": string}],
-"requirements": [{"title": string, "description": string, "priority": string, "category": string}],
-"confidence": number, "followUpQuestions": [{"question": string, "priority": string, "purpose": string}]
-}. Ground every finding in the input and do not invent quotes.\n\nINPUT:\n${content}`;
-}
-
-async function callAiProvider(inputType: string, content: string): Promise<StructuredAnalysis> {
-  const { provider, key } = providerSettings();
-  const prompt = analysisPrompt(inputType, content);
-  let response: globalThis.Response;
-  let text = "";
-
-  if (provider === "openai") {
-    response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: "You are a customer discovery analyst. Return valid JSON only." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-    const payload = await response.json() as any;
-    if (!response.ok) throw new Error(payload?.error?.message || `OpenAI request failed (${response.status}).`);
-    text = payload?.choices?.[0]?.message?.content || "";
-  } else if (provider === "anthropic") {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest", max_tokens: 3000, system: "Return valid JSON only.", messages: [{ role: "user", content: prompt }] }),
-    });
-    const payload = await response.json() as any;
-    if (!response.ok) throw new Error(payload?.error?.message || `Anthropic request failed (${response.status}).`);
-    text = payload?.content?.[0]?.text || "";
-  } else if (provider === "gemini") {
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: `${prompt}\nReturn JSON only.` }] }] }),
-    });
-    const payload = await response.json() as any;
-    if (!response.ok) throw new Error(payload?.error?.message || `Gemini request failed (${response.status}).`);
-    text = payload?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  } else {
-    throw new Error(`Unsupported AI provider: ${provider}.`);
-  }
-
-  const jsonText = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-  let parsed: unknown;
-  try { parsed = JSON.parse(jsonText); } catch { throw new Error("The AI provider returned invalid JSON."); }
-  const result = StructuredAnalysisSchema.safeParse(parsed);
-  if (!result.success) throw new Error(`The AI provider returned an invalid analysis structure: ${result.error.issues[0]?.message || "schema validation failed"}`);
-  return result.data;
-}
-
 export async function extractTextFromBuffer(
   buffer: Buffer,
   fileName: string,
@@ -170,104 +64,6 @@ export async function extractTextFromBuffer(
 
   const words = text.split(/\s+/).filter(Boolean).length;
   return { text, wordCount: words, charCount: text.length };
-}
-
-export function performAiAnalysis(content: string, inputType: string, fileName?: string): AnalysisResultData {
-  const trimmed = content.trim();
-  const sentences = trimmed
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 5);
-
-  const extractedQuotes: string[] = [];
-  for (const sentence of sentences) {
-    if (sentence.length < 150) extractedQuotes.push(sentence);
-    if (extractedQuotes.length >= 4) break;
-  }
-  if (extractedQuotes.length === 0) extractedQuotes.push(trimmed.slice(0, 120));
-
-  let goal = "The user seeks to accomplish their primary objective reliably and without workflow friction.";
-  if (sentences.length > 0) {
-    goal = `The customer wants to ${sentences[0].toLowerCase().replace(/^(i|we)\s+(want|need|spend|am|are|have)\s+/i, "")}.`;
-  }
-
-  let stated = "The customer experiences frustration during standard operation.";
-  if (sentences.length > 1) stated = sentences[1];
-  else if (sentences.length === 1) stated = sentences[0];
-
-  const root = `Systemic gap between customer expectations for immediate success and underlying workflow/reliability constraints in ${inputType.toLowerCase()} handling.`;
-  const rootExplanation = `While stated as '${stated.slice(0, 80)}...', the root challenge stems from insufficient feedback, retry loops, or lack of guided clarity when handling ${inputType.toLowerCase()} input.`;
-
-  const keywords = ["fail", "slow", "error", "confusing", "hard", "wait", "broken", "issue", "support", "retry", "lost", "delay", "help"];
-  const foundSymptoms: string[] = [];
-  for (const word of keywords) {
-    if (trimmed.toLowerCase().includes(word)) {
-      foundSymptoms.push(`Customer mentions "${word}" related friction`);
-    }
-  }
-  if (foundSymptoms.length < 3) {
-    foundSymptoms.push("Workflow completion delays", "Uncertain outcome during interaction", "Manual workarounds required");
-  }
-
-  const evidence: Array<[string, string]> = extractedQuotes.map((q, idx) => {
-    const formattedQuote = q.startsWith("\u201c") || q.startsWith('"') ? q : `"${q}"`;
-    const interpretations = [
-      "Direct indicator of customer friction and operational blockage.",
-      "Shows dependence on external assistance or repeated manual retries.",
-      "Highlights missing self-service error resolution.",
-      "Demonstrates high cognitive load or process confusion.",
-    ];
-    return [formattedQuote, interpretations[idx % interpretations.length]];
-  });
-
-  const missing: Array<[string, string, string]> = [
-    ["Frequency & Scale", `How often does this specific ${inputType.toLowerCase()} issue occur across users?`, "High"],
-    ["Customer Segment", "Are power users or first-time users more impacted by this pattern?", "High"],
-    ["Business Impact", "What is the churn or support ticket cost associated with this frustration?", "Medium"],
-    ["Existing Workaround", "What step-by-step alternative path are customers taking right now?", "Medium"],
-  ];
-
-  const conflicts: Array<[string, string, string]> = [
-    ["Efficiency vs Verification", "Customer desires immediate execution, but verification safety checks introduce necessary friction.", "High"],
-    ["Self-service vs Support Escalation", "Users prefer resolving issues in-app but fall back to direct support when status is ambiguous.", "Medium"],
-  ];
-
-  const requirements: Array<[string, string, string, string]> = [
-    ["Real-time Validation & Feedback", "Provide immediate inline feedback during customer input to prevent silent failures.", "High", "Functional"],
-    ["Automated Retry & Recovery", "Implement automatic error recovery without requiring user to restart the full process.", "High", "Resilience"],
-    ["Status Transparency", "Display clear progress steps and current state indicators during long-running actions.", "Medium", "UX"],
-  ];
-
-  const questions: Array<[string, string, string]> = [
-    [`Can you walk me through the exact moment when the ${inputType.toLowerCase()} process failed?`, "High", "Isolate the specific trigger event."],
-    ["What specific error messages or visual cues did you observe?", "High", "Identify UI clarity and technical error handling."],
-    ["What action did you take immediately after experiencing this issue?", "High", "Map out user fallback behavior."],
-    ["How would your ideal workflow handle this situation?", "Medium", "Understand user mental models and expectations."],
-  ];
-
-  const assumptions = [
-    { title: "Users understand the system terminology and error prompts.", description: "Assumes technical terms match the customer's domain understanding.", confidence: 74, status: "Not confirmed" },
-    { title: "Current support response time is an acceptable fallback.", description: "Assumes calling support is a tolerable workaround for users.", confidence: 65, status: "Unvalidated" },
-  ];
-
-  const textLength = trimmed.length;
-  const confidence = Math.min(96, Math.max(70, Math.floor(75 + textLength / 50)));
-  const evidenceScore = Math.min(98, Math.max(68, Math.floor(70 + evidence.length * 6)));
-  const clarityScore = Math.min(95, Math.max(65, Math.floor(80 + sentences.length * 2)));
-  const completenessScore = Math.min(92, Math.max(60, Math.floor(65 + textLength / 40)));
-
-  return {
-    inputType, fileName, goal, stated, root, rootExplanation,
-    symptoms: foundSymptoms.slice(0, 5), assumptions, evidence, missing, conflicts, requirements, questions,
-    validation: {
-      confidence, evidenceScore, clarityScore, completenessScore,
-      summary: `Analysis performed on ${wordsCount(trimmed)} words of ${inputType} data. Strong evidence detected for underlying workflow friction.`,
-    },
-  };
-}
-
-function wordsCount(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length;
 }
 
 // ─── Import DB ────────────────────────────────────────────────────────────────
@@ -307,7 +103,7 @@ import {
   getUserProfile,
   updateUserProfile,
   getWorkspaceMetrics,
-} from "./db.js";
+} from "../database/db.js";
 
 // ─── Document extraction ──────────────────────────────────────────────────────
 
@@ -333,11 +129,49 @@ export async function handleAnalyzeRoute(req: Request, res: Response) {
     if (!content || typeof content !== "string" || content.trim().length === 0) {
       return res.status(400).json({ success: false, error: "Input content cannot be empty." });
     }
-    const analysis = performAiAnalysis(content, inputType || "Conversation", fileName);
-    return res.json({ success: true, data: analysis });
+    const providerResult = await analyzeCustomerInput(inputType || "Conversation", content);
+    return res.json({ success: true, data: toPresentationAnalysis(providerResult.data, inputType || "Conversation", fileName), provider: providerResult.provider });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "An error occurred during AI analysis." });
   }
+}
+
+function toPresentationAnalysis(structured: StructuredAnalysis, inputType: string, fileName?: string) {
+  return {
+    ...structured,
+    inputType,
+    fileName,
+    stated: structured.statedProblems,
+    root: structured.rootProblems,
+    rootExplanation: `The root problem is inferred from the customer's stated problem and the evidence in this ${inputType.toLowerCase()}.`,
+    evidence: structured.evidence.map((item) => [item.quote, item.interpretation]),
+    missing: structured.missingContext.map((item) => [item.title, item.description, item.priority]),
+    conflicts: structured.conflicts.map((item) => [item.topic, item.description, item.impact]),
+    requirements: structured.requirements.map((item) => [item.title, item.description, item.priority, item.category]),
+    questions: structured.followUpQuestions.map((item) => [item.question, item.priority, item.purpose]),
+    validation: {
+      confidence: structured.confidence,
+      evidenceScore: Math.min(100, structured.confidence + 5),
+      clarityScore: structured.confidence,
+      completenessScore: structured.confidence,
+      summary: `Structured analysis grounded in ${structured.evidence.length} evidence item(s).`,
+    },
+  };
+}
+
+export async function handleRequirementAiRoute(req: Request, res: Response) {
+  try {
+    const content = req.body?.content;
+    if (!content || typeof content !== "string" || !content.trim()) return res.status(400).json({ success: false, error: "Requirement input cannot be empty." });
+    const result = await analyzeRequirementInput(content.trim());
+    return res.json({ success: true, data: result.data, provider: result.provider });
+  } catch (err: any) {
+    return res.status(502).json({ success: false, error: err?.message || "Requirement analysis failed." });
+  }
+}
+
+export function handleAiHealthRoute(_req: Request, res: Response) {
+  return res.json({ success: true, data: getAiHealth() });
 }
 
 export async function createAnalysis(input: {
@@ -355,32 +189,19 @@ export async function createAnalysis(input: {
 
   saveAnalysis(projectId, inputType, content, input.fileName, 2, "analyzing", null);
   try {
-    const structured = await callAiProvider(inputType, content);
-    const result = {
-      ...structured,
-      inputType,
-      fileName: input.fileName,
-      // These aliases keep the existing presentation components compatible.
-      stated: structured.statedProblems,
-      root: structured.rootProblems,
-      rootExplanation: `The root problem is inferred from the customer's stated problem and the evidence in this ${inputType.toLowerCase()}.`,
-      evidence: structured.evidence.map((item) => [item.quote, item.interpretation]),
-      missing: structured.missingContext.map((item) => [item.title, item.description, item.priority]),
-      conflicts: structured.conflicts.map((item) => [item.topic, item.description, item.impact]),
-      requirements: structured.requirements.map((item) => [item.title, item.description, item.priority, item.category]),
-      questions: structured.followUpQuestions.map((item) => [item.question, item.priority, item.purpose]),
-      validation: {
-        confidence: structured.confidence,
-        evidenceScore: Math.min(100, structured.confidence + 5),
-        clarityScore: structured.confidence,
-        completenessScore: Math.min(100, structured.confidence),
-        summary: `Structured analysis grounded in ${structured.evidence.length} evidence item(s).`,
-      },
-    };
+    const providerResult = await analyzeCustomerInput(inputType, content);
+    const structured = providerResult.data;
+    const result = toPresentationAnalysis(structured, inputType, input.fileName);
     const row = saveAnalysis(projectId, inputType, content, input.fileName, 3, "discovered", result);
     for (const item of structured.followUpQuestions) createQuestion(projectId, item.question, item.priority, item.purpose, row.id);
     for (const item of structured.requirements) createRequirement(projectId, item.title, item.category, "Missing", item.priority, item.description);
-    return { id: row.id, projectId, currentStep: 3, status: "discovered", analysisResult: result };
+    const existingClarifications = getClarifications(projectId);
+    for (const item of structured.missingContext) {
+      if (!existingClarifications.some((clarification) => clarification.question === item.description)) {
+        createClarification(projectId, item.description, item.priority, "AI Missing Context");
+      }
+    }
+    return { id: row.id, projectId, currentStep: 3, status: "discovered", provider: providerResult.provider, analysisResult: result };
   } catch (error) {
     saveAnalysis(projectId, inputType, content, input.fileName, 2, "failed", null);
     throw error;
@@ -558,24 +379,8 @@ export async function handleAiGuidanceRoute(req: Request, res: Response) {
     const project = projectId ? getProjectById(Number(projectId)) : null;
     const projName = project?.name || "your project";
 
-    let guidance = "";
-
-    if (!step || step === 1) {
-      guidance = `For ${projName}, the strongest analyses include specific customer moments, workarounds, or exact quotes—not just high-level summaries.`;
-    } else if (step === 2) {
-      guidance = `CLARIVON AI is parsing customer statements for ${projName} to separate surface complaints from root problems.`;
-    } else if (step === 3) {
-      const rootMsg = analysisResult?.rootProblems || analysisResult?.root || "the reported problem";
-      guidance = `Root insight for ${projName}: ${rootMsg.slice(0, 90)}...`;
-    } else if (step === 4) {
-      const confidence = analysisResult?.confidence || analysisResult?.validation?.confidence || 0;
-      const gaps = analysisResult?.missingContext?.length || analysisResult?.missing?.length || 0;
-      guidance = `Discovery confidence is ${confidence}%. Focus your next conversation on resolving the ${gaps} remaining context gaps.`;
-    } else {
-      guidance = `Keep discovery focused on behavior and specific friction points across ${projName}.`;
-    }
-
-    return res.json({ success: true, data: { guidance, projectName: projName, step } });
+    const result = await generateGuidance({ projectName: projName, step: Number(step) || 1, analysisResult });
+    return res.json({ success: true, data: { guidance: result.data, projectName: projName, step, provider: result.provider } });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "AI guidance temporarily unavailable." });
   }
@@ -774,23 +579,24 @@ export async function handleCreateReportRoute(req: Request, res: Response) {
     if (!project) return res.status(404).json({ success: false, error: "Project not found." });
 
     const analysis = getActiveAnalysis(Number(projectId));
-    const analysisData = analysis?.results_json ? JSON.parse(analysis.results_json) : null;
+    if (!analysis?.results_json) return res.status(409).json({ success: false, error: "Run a real AI analysis before creating a report." });
+    const analysisData = JSON.parse(analysis.results_json);
 
     const reqs = getRequirements(Number(projectId));
     const questions = getQuestions(Number(projectId));
 
     const content = {
       project: { id: project.id, name: project.name, customer: project.customer, description: project.description },
-      goal: analysisData?.goal || "Establish seamless end-to-end customer workflow.",
-      root: analysisData?.root || "Workflow bottlenecks impacting user satisfaction.",
-      stated: analysisData?.stated || "Operational friction during standard usage.",
+      goal: analysisData.goal,
+      root: analysisData.root,
+      stated: analysisData.stated,
       evidence: analysisData?.evidence || [],
       symptoms: analysisData?.symptoms || [],
       missing: analysisData?.missing || [],
       conflicts: analysisData?.conflicts || [],
       requirements: reqs.map((r) => ({ title: r.title, status: r.status, priority: r.priority, category: r.category })),
       questions: questions.map((q) => ({ question: q.question, priority: q.priority, status: q.status })),
-      validation: analysisData?.validation || { confidence: 85, summary: "Discovery analysis complete." },
+      validation: analysisData.validation,
       generatedAt: new Date().toISOString(),
     };
 

@@ -218,8 +218,8 @@ function vitePluginApiRoutes(): Plugin {
         req.on("end", async () => {
           try {
             const body = bodyStr ? JSON.parse(bodyStr) : {};
-            const db = await import("./server/db");
-            const api = await import("./server/api");
+            const db = await import("../backend/src/database/db");
+            const api = await import("../backend/src/controllers/apiController");
             const urlObj = new URL(req.url || "", "http://localhost");
             const pathname = urlObj.pathname;
             const method = req.method?.toUpperCase() || "GET";
@@ -249,8 +249,9 @@ function vitePluginApiRoutes(): Plugin {
             // ── Analysis ─────────────────────────────────────────────────
             if (pathname === "/api/analyze" && method === "POST") {
               const { inputType, content, fileName } = body;
+              void fileName;
               if (!content?.trim()) return json400("Input content cannot be empty.");
-              const data = api.performAiAnalysis(content, inputType || "Conversation", fileName);
+              const data = (await api.analyzeCustomerInput(inputType || "Conversation", content)).data;
               return json200({ success: true, data });
             }
 
@@ -606,21 +607,23 @@ ${content.validation?`<h2>Validation Summary</h2><p>${content.validation.summary
 </html>`;
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy(), vitePluginApiRoutes()];
+void vitePluginApiRoutes;
+
+const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
 
 export default defineConfig({
   plugins,
   resolve: {
     alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets"),
+      "@": path.resolve(import.meta.dirname, "src"),
+      "@shared": path.resolve(import.meta.dirname, "..", "shared"),
+      "@assets": path.resolve(import.meta.dirname, "..", "attached_assets"),
     },
   },
   envDir: path.resolve(import.meta.dirname),
-  root: path.resolve(import.meta.dirname, "client"),
+  root: path.resolve(import.meta.dirname),
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    outDir: path.resolve(import.meta.dirname, "..", "dist/frontend"),
     emptyOutDir: true,
   },
   server: {
@@ -639,6 +642,9 @@ export default defineConfig({
     fs: {
       strict: true,
       deny: ["**/.*"],
+    },
+    proxy: {
+      "/api": "http://localhost:3001",
     },
   },
 });

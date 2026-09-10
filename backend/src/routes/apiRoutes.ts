@@ -6,6 +6,8 @@ import { Router } from "express";
 import {
   handleExtractFileRoute,
   handleAnalyzeRoute,
+  handleRequirementAiRoute,
+  handleAiHealthRoute,
   handleGetMetricsRoute,
   // Projects
   handleGetProjectsRoute,
@@ -52,7 +54,7 @@ import {
   handleUpdateSettingsRoute,
   handleGetUserProfileRoute,
   handleUpdateUserProfileRoute,
-} from "../../api.js";
+} from "../controllers/apiController.js";
 
 const router = Router();
 
@@ -62,6 +64,8 @@ router.get("/metrics", handleGetMetricsRoute);
 // Document extraction & analysis
 router.post("/extract-file", handleExtractFileRoute);
 router.post("/analyze", handleAnalyzeRoute);
+router.post("/ai/requirements", handleRequirementAiRoute);
+router.get("/ai/health", handleAiHealthRoute);
 
 // Projects CRUD
 router.get("/projects", handleGetProjectsRoute);

@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 import {
   handleExtractFileRoute,
   handleAnalyzeRoute,
+  handleRequirementAiRoute,
+  handleAiHealthRoute,
   handleGetMetricsRoute,
   // Projects
   handleGetProjectsRoute,
@@ -51,10 +53,7 @@ import {
   handleUpdateSettingsRoute,
   handleGetUserProfileRoute,
   handleUpdateUserProfileRoute,
-} from "./api.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+} from "./controllers/apiController.js";
 
 async function startServer() {
   const app = express();
@@ -69,6 +68,8 @@ async function startServer() {
   // Document extraction & analysis
   app.post("/api/extract-file", handleExtractFileRoute);
   app.post("/api/analyze", handleAnalyzeRoute);
+  app.post("/api/ai/requirements", handleRequirementAiRoute);
+  app.get("/api/ai/health", handleAiHealthRoute);
 
   // Projects CRUD
   app.get("/api/projects", handleGetProjectsRoute);
@@ -125,10 +126,7 @@ async function startServer() {
   app.put("/api/user-profile", handleUpdateUserProfileRoute);
 
   // Serve static files from dist/public in production
-  const staticPath =
-    process.env.NODE_ENV === "production"
-      ? path.resolve(__dirname, "public")
-      : path.resolve(__dirname, "..", "dist", "public");
+  const staticPath = path.resolve(process.cwd(), "dist", "frontend");
 
   app.use(express.static(staticPath));
 
@@ -137,7 +135,7 @@ async function startServer() {
     res.sendFile(path.join(staticPath, "index.html"));
   });
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3001;
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });

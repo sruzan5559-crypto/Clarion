@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 
-const dbPath = path.resolve(import.meta.dirname, "..", "..", "..", "data", "clarivon.db");
+const dbPath = process.env.CLARIVON_DB_PATH || path.resolve(process.cwd(), "backend", "data", "clarivon.db");
 const db = new Database(dbPath);
 
 // Enable WAL mode for performance & concurrent reads
@@ -135,37 +135,45 @@ db.exec(`
   VALUES (1, 'John Doe', 'john.doe@clarivon.com', 'Lead Product Manager', 'JD');
 `);
 
+// ─── Seed Data Script ────────────────────────────────────────────────────────
+
 export function seedDatabaseIfEmpty() {
   const countStmt = db.prepare("SELECT COUNT(*) as count FROM projects");
   const { count } = countStmt.get() as { count: number };
 
+  // If projects exist with requirements, questions, and analyses, skip seeding
   const reqCountStmt = db.prepare("SELECT COUNT(*) as count FROM requirements");
   const { count: reqCount } = reqCountStmt.get() as { count: number };
 
   if (count > 0 && reqCount > 5) {
-    return;
+    return; // Already populated
   }
 
+  // Clear existing default rows if under-seeded
   db.exec("DELETE FROM projects; DELETE FROM analyses; DELETE FROM requirements; DELETE FROM questions; DELETE FROM reports; DELETE FROM clarifications; DELETE FROM issues;");
 
+  // Project 1: Retail Banking Mobile App / FinBank
   const p1Info = db.prepare(`
     INSERT INTO projects (name, customer, description, tone, status, created_at, updated_at)
     VALUES ('Retail Banking Mobile App', 'FinBank', 'Mobile banking transfer, card activation, and account management user flows.', 'blue', 'In Progress', datetime('now', '-30 days'), datetime('now', '-2 hours'))
   `).run();
   const p1Id = Number(p1Info.lastInsertRowid);
 
+  // Project 2: E-Commerce Checkout / Northstar Market
   const p2Info = db.prepare(`
     INSERT INTO projects (name, customer, description, tone, status, created_at, updated_at)
     VALUES ('E-Commerce Checkout', 'Northstar Market', 'Streamline guest checkout, address lookup, and payment gateway retries.', 'violet', 'In Progress', datetime('now', '-20 days'), datetime('now', '-1 day'))
   `).run();
   const p2Id = Number(p2Info.lastInsertRowid);
 
+  // Project 3: Healthcare Appointment System / Wellnest
   const p3Info = db.prepare(`
     INSERT INTO projects (name, customer, description, tone, status, created_at, updated_at)
     VALUES ('Healthcare Appointment System', 'Wellnest', 'Patient self-scheduling, doctor availability, and SMS reminder workflows.', 'mint', 'Validated', datetime('now', '-10 days'), datetime('now', '-3 days'))
   `).run();
   const p3Id = Number(p3Info.lastInsertRowid);
 
+  // ── Seed Analyses for Project 1 (FinBank) ──
   const p1AnalysisJson = {
     inputType: "Conversation",
     goal: "The customer wants to send money to family members internationally without recurring transfer failures or delayed status updates.",
@@ -216,6 +224,7 @@ export function seedDatabaseIfEmpty() {
     VALUES (?, 'Conversation', 'Interviewer: What issue did you run into during transfer?\nUser: Every time I hit transfer, the screen freezes for 10 seconds and then shows an error without saying if it went through.', 'FinBank_Interview_08.txt', 4, 'saved', ?, datetime('now', '-2 hours'))
   `).run(p1Id, JSON.stringify(p1AnalysisJson));
 
+  // ── Seed Requirements for Project 1 ──
   const reqInsert = db.prepare(`
     INSERT INTO requirements (project_id, title, category, status, priority, notes) VALUES (?, ?, ?, ?, ?, ?)
   `);
@@ -225,14 +234,17 @@ export function seedDatabaseIfEmpty() {
   reqInsert.run(p1Id, 'Push Notification on Transfer Clearance', 'Workflow & process', 'Missing', 'Medium', 'Notify user within 5 seconds of clearance.');
   reqInsert.run(p1Id, 'Biometric Re-authentication for Large Sums', 'Security & Compliance', 'Known', 'High', 'Require FaceID/Fingerprint for transfers over $1,000.');
 
+  // ── Seed Requirements for Project 2 (Northstar Market) ──
   reqInsert.run(p2Id, '1-Click Guest Checkout', 'Customer context', 'Known', 'High', 'Allow purchasing without forcing account password creation.');
   reqInsert.run(p2Id, 'Address Auto-Complete via Google Maps API', 'Integrations', 'Partially Known', 'High', 'Reduce address entry typos during mobile checkout.');
   reqInsert.run(p2Id, 'Saved Payment Method Quick Select', 'User Experience', 'Missing', 'Medium', 'Support Apple Pay, Google Pay, and saved cards.');
 
+  // ── Seed Requirements for Project 3 (Wellnest) ──
   reqInsert.run(p3Id, 'Patient Self-Scheduling Calendar', 'Workflow & process', 'Known', 'High', 'Display real-time doctor availability slots.');
   reqInsert.run(p3Id, 'Automated SMS Appointment Reminders', 'Communication', 'Known', 'High', 'Send SMS 24 hours and 2 hours prior to scheduled appointment.');
   reqInsert.run(p3Id, 'Insurance Card Photo Upload & OCR', 'Integrations', 'Known', 'Medium', 'Extract member ID and group number automatically.');
 
+  // ── Seed Questions for Project 1 ──
   const qInsert = db.prepare(`
     INSERT INTO questions (project_id, question, priority, purpose, status, answer) VALUES (?, ?, ?, ?, ?, ?)
   `);
@@ -241,11 +253,14 @@ export function seedDatabaseIfEmpty() {
   qInsert.run(p1Id, 'How should the mobile app handle partial network dropouts during transfer submit?', 'High', 'Define offline queueing behavior.', 'Unanswered', '');
   qInsert.run(p1Id, 'What is the maximum acceptable retry threshold before auto-canceling?', 'Medium', 'Establish backend retry policy.', 'Unanswered', '');
 
+  // ── Seed Questions for Project 2 ──
   qInsert.run(p2Id, 'What percentage of mobile users drop off at the credit card entry step?', 'High', 'Quantify checkout friction.', 'Unanswered', '');
   qInsert.run(p2Id, 'Does guest checkout require email verification prior to order placement?', 'High', 'Define order confirmation constraint.', 'Answered', 'No, verification email is sent post-purchase.');
 
+  // ── Seed Questions for Project 3 ──
   qInsert.run(p3Id, 'Are patients allowed to reschedule appointments less than 2 hours before the slot?', 'Medium', 'Establish cancellation policy rules.', 'Answered', 'Rescheduling within 2 hours requires calling the clinic front desk.');
 
+  // ── Seed Clarifications for Project 1 & 2 ──
   const clarInsert = db.prepare(`
     INSERT INTO clarifications (project_id, question, priority, category, status, answer) VALUES (?, ?, ?, ?, ?, ?)
   `);
@@ -254,6 +269,7 @@ export function seedDatabaseIfEmpty() {
   clarInsert.run(p1Id, 'Do daily transfer limits reset at midnight UTC or local customer timezone?', 'Medium', 'Compliance', 'Resolved', 'Daily transfer limits reset at midnight in customer’s home timezone.');
   clarInsert.run(p2Id, 'Is address validation mandatory for digital gift card purchases?', 'Medium', 'Edge Cases', 'Open', '');
 
+  // ── Seed Issues for Project 1 & 2 ──
   const issueInsert = db.prepare(`
     INSERT INTO issues (project_id, title, severity, category, status, description, resolution_notes) VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
@@ -262,6 +278,7 @@ export function seedDatabaseIfEmpty() {
   issueInsert.run(p1Id, 'Missing clear failure reason for insufficient funds vs daily limit reached', 'Medium', 'Missing Context', 'Resolved', 'Both error states previously triggered generic "Transfer Failed".', 'Mapped error code 4001 to Daily Limit Exceeded and 4002 to Insufficient Funds.');
   issueInsert.run(p2Id, 'Guest checkout fraud risk on high-value orders', 'High', 'Risk', 'Open', 'Unauthenticated purchases above $500 show 3x higher chargeback rates.', '');
 
+  // ── Seed Reports for Project 1 & 3 ──
   const rInsert = db.prepare(`
     INSERT INTO reports (project_id, title, status, content_json, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now', '-2 days'), datetime('now', '-1 day'))
   `);
@@ -299,7 +316,10 @@ export function seedDatabaseIfEmpty() {
   }));
 }
 
+// Run seed on start
 seedDatabaseIfEmpty();
+
+// ─── Interfaces ──────────────────────────────────────────────────────────────
 
 export interface ProjectRow {
   id: number;
@@ -407,6 +427,8 @@ export interface UserProfileRow {
   updated_at: string;
 }
 
+// ─── Project Helpers ─────────────────────────────────────────────────────────
+
 function enrichProject(row: any): ProjectRow {
   const analyses = db
     .prepare("SELECT results_json FROM analyses WHERE project_id = ? AND results_json IS NOT NULL")
@@ -503,6 +525,8 @@ export function deleteProject(id: number): void {
   db.prepare("DELETE FROM projects WHERE id=?").run(id);
 }
 
+// ─── Analysis ────────────────────────────────────────────────────────────────
+
 export function getActiveAnalysis(projectId?: number): AnalysisRow | undefined {
   if (projectId) {
     return db
@@ -549,6 +573,8 @@ export function updateAnalysisStep(projectId: number, step: number): void {
     WHERE project_id=? AND id=(SELECT max(id) FROM analyses WHERE project_id=?)
   `).run(step, new Date().toISOString(), projectId, projectId);
 }
+
+// ─── Requirements ────────────────────────────────────────────────────────────
 
 export function getRequirements(projectId?: number): RequirementRow[] {
   if (projectId) {
@@ -602,6 +628,8 @@ export function deleteRequirement(id: number): void {
   db.prepare("DELETE FROM requirements WHERE id=?").run(id);
 }
 
+// ─── Questions ───────────────────────────────────────────────────────────────
+
 export function getQuestions(projectId?: number): QuestionRow[] {
   if (projectId) {
     return db
@@ -652,6 +680,8 @@ export function updateQuestion(
 export function deleteQuestion(id: number): void {
   db.prepare("DELETE FROM questions WHERE id=?").run(id);
 }
+
+// ─── Reports ─────────────────────────────────────────────────────────────────
 
 export function getReports(projectId?: number): ReportRow[] {
   if (projectId) {
@@ -704,6 +734,8 @@ export function deleteReport(id: number): void {
   db.prepare("DELETE FROM reports WHERE id=?").run(id);
 }
 
+// ─── Clarifications ──────────────────────────────────────────────────────────
+
 export function getClarifications(projectId?: number): ClarificationRow[] {
   if (projectId) {
     return db
@@ -753,6 +785,8 @@ export function updateClarification(
 export function deleteClarification(id: number): void {
   db.prepare("DELETE FROM clarifications WHERE id=?").run(id);
 }
+
+// ─── Issues ───────────────────────────────────────────────────────────────────
 
 export function getIssues(projectId?: number): IssueRow[] {
   if (projectId) {
@@ -806,6 +840,8 @@ export function deleteIssue(id: number): void {
   db.prepare("DELETE FROM issues WHERE id=?").run(id);
 }
 
+// ─── Settings & Profile ─────────────────────────────────────────────────────
+
 export function getSettings(): SettingsRow {
   return db.prepare("SELECT * FROM settings WHERE id=1").get() as SettingsRow;
 }
@@ -844,6 +880,8 @@ export function updateUserProfile(fields: Partial<UserProfileRow>): UserProfileR
   );
   return getUserProfile();
 }
+
+// ─── Aggregated Workspace Metrics ───────────────────────────────────────────
 
 export function getWorkspaceMetrics() {
   const projectCount = (db.prepare("SELECT COUNT(*) as c FROM projects WHERE archived=0").get() as any).c;

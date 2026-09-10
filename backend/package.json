@@ -1,0 +1,10 @@
+{
+  "name": "clarivon-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "esbuild src/index.ts --platform=node --packages=external --bundle --format=esm --outdir=../dist/backend",
+    "check": "tsc -p ../tsconfig.json --noEmit"
+  }
+}
