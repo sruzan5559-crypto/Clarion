@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
 import mammoth from "mammoth";
 import type { Request, Response } from "express";
+import { z } from "zod";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -31,6 +34,112 @@ export interface AnalysisResultData {
     completenessScore: number;
     summary: string;
   };
+}
+
+const StructuredAnalysisSchema = z.object({
+  goal: z.string().min(1),
+  statedProblems: z.string().min(1),
+  rootProblems: z.string().min(1),
+  symptoms: z.array(z.string()).min(1),
+  evidence: z.array(z.object({ quote: z.string().min(1), interpretation: z.string().min(1) })).min(1),
+  assumptions: z.array(z.object({ title: z.string(), description: z.string(), confidence: z.number().min(0).max(100), status: z.string() })),
+  missingContext: z.array(z.object({ title: z.string(), description: z.string(), priority: z.string() })),
+  conflicts: z.array(z.object({ topic: z.string(), description: z.string(), impact: z.string() })),
+  requirements: z.array(z.object({ title: z.string(), description: z.string(), priority: z.string(), category: z.string() })),
+  confidence: z.number().min(0).max(100),
+  followUpQuestions: z.array(z.object({ question: z.string(), priority: z.string(), purpose: z.string() })).min(1),
+});
+
+type StructuredAnalysis = z.infer<typeof StructuredAnalysisSchema>;
+
+function loadBackendEnv() {
+  const envFiles = [path.resolve(process.cwd(), ".env"), path.resolve(process.cwd(), "server/.env")];
+  for (const envFile of envFiles) {
+    if (!fs.existsSync(envFile)) continue;
+    for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (!match || process.env[match[1]]) continue;
+      process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+    }
+  }
+}
+
+function providerSettings() {
+  loadBackendEnv();
+  const provider = (process.env.AI_PROVIDER || "openai").toLowerCase();
+  const key = provider === "anthropic"
+    ? process.env.ANTHROPIC_API_KEY
+    : provider === "gemini"
+      ? process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
+      : process.env.OPENAI_API_KEY;
+  if (!key) throw new Error(`The ${provider} AI provider is not configured. Add its API key to the backend .env.`);
+  return { provider, key };
+}
+
+function analysisPrompt(inputType: string, content: string) {
+  return `Analyze this ${inputType} customer input. Return JSON only, matching this exact shape: {
+"goal": string, "statedProblems": string, "rootProblems": string, "symptoms": string[],
+"evidence": [{"quote": string, "interpretation": string}],
+"assumptions": [{"title": string, "description": string, "confidence": number, "status": string}],
+"missingContext": [{"title": string, "description": string, "priority": string}],
+"conflicts": [{"topic": string, "description": string, "impact": string}],
+"requirements": [{"title": string, "description": string, "priority": string, "category": string}],
+"confidence": number, "followUpQuestions": [{"question": string, "priority": string, "purpose": string}]
+}. Ground every finding in the input and do not invent quotes.\n\nINPUT:\n${content}`;
+}
+
+async function callAiProvider(inputType: string, content: string): Promise<StructuredAnalysis> {
+  const { provider, key } = providerSettings();
+  const prompt = analysisPrompt(inputType, content);
+  let response: globalThis.Response;
+  let text = "";
+
+  if (provider === "openai") {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "You are a customer discovery analyst. Return valid JSON only." },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+    const payload = await response.json() as any;
+    if (!response.ok) throw new Error(payload?.error?.message || `OpenAI request failed (${response.status}).`);
+    text = payload?.choices?.[0]?.message?.content || "";
+  } else if (provider === "anthropic") {
+    response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest", max_tokens: 3000, system: "Return valid JSON only.", messages: [{ role: "user", content: prompt }] }),
+    });
+    const payload = await response.json() as any;
+    if (!response.ok) throw new Error(payload?.error?.message || `Anthropic request failed (${response.status}).`);
+    text = payload?.content?.[0]?.text || "";
+  } else if (provider === "gemini") {
+    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: `${prompt}\nReturn JSON only.` }] }] }),
+    });
+    const payload = await response.json() as any;
+    if (!response.ok) throw new Error(payload?.error?.message || `Gemini request failed (${response.status}).`);
+    text = payload?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  } else {
+    throw new Error(`Unsupported AI provider: ${provider}.`);
+  }
+
+  const jsonText = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+  let parsed: unknown;
+  try { parsed = JSON.parse(jsonText); } catch { throw new Error("The AI provider returned invalid JSON."); }
+  const result = StructuredAnalysisSchema.safeParse(parsed);
+  if (!result.success) throw new Error(`The AI provider returned an invalid analysis structure: ${result.error.issues[0]?.message || "schema validation failed"}`);
+  return result.data;
 }
 
 export async function extractTextFromBuffer(
@@ -231,6 +340,64 @@ export async function handleAnalyzeRoute(req: Request, res: Response) {
   }
 }
 
+export async function createAnalysis(input: {
+  projectId?: number;
+  inputType?: string;
+  content?: string;
+  rawInput?: string;
+  fileName?: string;
+}) {
+  const projectId = Number(input.projectId);
+  const inputType = input.inputType?.trim() || "Conversation";
+  const content = (input.content || input.rawInput || "").trim();
+  if (!projectId || !getProjectById(projectId)) throw new Error("Select a project before analyzing.");
+  if (!content) throw new Error("Customer input cannot be empty.");
+
+  saveAnalysis(projectId, inputType, content, input.fileName, 2, "analyzing", null);
+  try {
+    const structured = await callAiProvider(inputType, content);
+    const result = {
+      ...structured,
+      inputType,
+      fileName: input.fileName,
+      // These aliases keep the existing presentation components compatible.
+      stated: structured.statedProblems,
+      root: structured.rootProblems,
+      rootExplanation: `The root problem is inferred from the customer's stated problem and the evidence in this ${inputType.toLowerCase()}.`,
+      evidence: structured.evidence.map((item) => [item.quote, item.interpretation]),
+      missing: structured.missingContext.map((item) => [item.title, item.description, item.priority]),
+      conflicts: structured.conflicts.map((item) => [item.topic, item.description, item.impact]),
+      requirements: structured.requirements.map((item) => [item.title, item.description, item.priority, item.category]),
+      questions: structured.followUpQuestions.map((item) => [item.question, item.priority, item.purpose]),
+      validation: {
+        confidence: structured.confidence,
+        evidenceScore: Math.min(100, structured.confidence + 5),
+        clarityScore: structured.confidence,
+        completenessScore: Math.min(100, structured.confidence),
+        summary: `Structured analysis grounded in ${structured.evidence.length} evidence item(s).`,
+      },
+    };
+    const row = saveAnalysis(projectId, inputType, content, input.fileName, 3, "discovered", result);
+    for (const item of structured.followUpQuestions) createQuestion(projectId, item.question, item.priority, item.purpose, row.id);
+    for (const item of structured.requirements) createRequirement(projectId, item.title, item.category, "Missing", item.priority, item.description);
+    return { id: row.id, projectId, currentStep: 3, status: "discovered", analysisResult: result };
+  } catch (error) {
+    saveAnalysis(projectId, inputType, content, input.fileName, 2, "failed", null);
+    throw error;
+  }
+}
+
+export async function handleCreateAnalysisRoute(req: Request, res: Response) {
+  try {
+    const data = await createAnalysis(req.body || {});
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    const message = err?.message || "Analysis failed.";
+    return res.status(message.includes("Select a project") || message.includes("cannot be empty") ? 400 : 502)
+      .json({ success: false, error: message });
+  }
+}
+
 // ─── Metrics ──────────────────────────────────────────────────────────────────
 
 export async function handleGetMetricsRoute(_req: Request, res: Response) {
@@ -356,10 +523,30 @@ export async function handleUpdateStepRoute(req: Request, res: Response) {
   try {
     const { projectId, step } = req.body || {};
     if (!projectId || !step) return res.status(400).json({ success: false, error: "Missing projectId or step" });
+    const analysis = getActiveAnalysis(Number(projectId));
+    if (!analysis) return res.status(409).json({ success: false, error: "Analyze customer input before changing workflow steps." });
+    if (Number(step) < 1 || Number(step) > 4 || Number(step) > analysis.step + 1) {
+      return res.status(409).json({ success: false, error: "Complete the current discovery step before moving forward." });
+    }
     updateAnalysisStep(Number(projectId), Number(step));
     return res.json({ success: true, step });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "Failed to update step." });
+  }
+}
+
+export async function handleValidateAnalysisRoute(req: Request, res: Response) {
+  try {
+    const { projectId, decision, answers, findings } = req.body || {};
+    const project = Number(projectId);
+    const active = getActiveAnalysis(project);
+    if (!project || !active?.results_json) return res.status(409).json({ success: false, error: "Complete analysis before validating findings." });
+    if (decision !== "confirmed" && decision !== "rejected") return res.status(400).json({ success: false, error: "Validation decision must be confirmed or rejected." });
+    const result = { ...JSON.parse(active.results_json), validationReview: { decision, answers: answers || {}, findings: findings || {}, reviewedAt: new Date().toISOString() } };
+    const row = saveAnalysis(project, active.input_type, active.raw_input, active.file_name, decision === "confirmed" ? 4 : 3, decision === "confirmed" ? "validated" : "needs_review", result);
+    return res.json({ success: true, data: { id: row.id, currentStep: row.step, status: row.status, analysisResult: result } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to save validation." });
   }
 }
 
@@ -378,11 +565,11 @@ export async function handleAiGuidanceRoute(req: Request, res: Response) {
     } else if (step === 2) {
       guidance = `CLARIVON AI is parsing customer statements for ${projName} to separate surface complaints from root problems.`;
     } else if (step === 3) {
-      const rootMsg = analysisResult?.root || "Reliability friction is impacting customer confidence";
+      const rootMsg = analysisResult?.rootProblems || analysisResult?.root || "the reported problem";
       guidance = `Root insight for ${projName}: ${rootMsg.slice(0, 90)}...`;
     } else if (step === 4) {
-      const confidence = analysisResult?.validation?.confidence || 87;
-      const gaps = analysisResult?.missing?.length || 4;
+      const confidence = analysisResult?.confidence || analysisResult?.validation?.confidence || 0;
+      const gaps = analysisResult?.missingContext?.length || analysisResult?.missing?.length || 0;
       guidance = `Discovery confidence is ${confidence}%. Focus your next conversation on resolving the ${gaps} remaining context gaps.`;
     } else {
       guidance = `Keep discovery focused on behavior and specific friction points across ${projName}.`;
@@ -741,9 +928,14 @@ ${content.validation ? `
 
 // ─── Settings & Profile ─────────────────────────────────────────────────────
 
+function publicSettings() {
+  const settings = getSettings();
+  return { ...settings, api_key: "", api_key_configured: Boolean(settings.api_key) };
+}
+
 export async function handleGetSettingsRoute(_req: Request, res: Response) {
   try {
-    return res.json({ success: true, data: getSettings() });
+    return res.json({ success: true, data: publicSettings() });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
   }
@@ -752,7 +944,7 @@ export async function handleGetSettingsRoute(_req: Request, res: Response) {
 export async function handleUpdateSettingsRoute(req: Request, res: Response) {
   try {
     const settings = updateSettings(req.body || {});
-    return res.json({ success: true, data: settings });
+    return res.json({ success: true, data: { ...settings, api_key: "", api_key_configured: Boolean(settings.api_key) } });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message });
   }

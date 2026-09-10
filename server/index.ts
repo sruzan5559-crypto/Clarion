@@ -13,9 +13,11 @@ import {
   handleArchiveProjectRoute,
   handleDeleteProjectRoute,
   // Analyses
+  handleCreateAnalysisRoute,
   handleGetActiveAnalysisRoute,
   handleSaveAnalysisRoute,
   handleUpdateStepRoute,
+  handleValidateAnalysisRoute,
   // AI
   handleAiGuidanceRoute,
   // Requirements
@@ -76,9 +78,11 @@ async function startServer() {
   app.delete("/api/projects/:id", handleDeleteProjectRoute);
 
   // Analyses
+  app.post("/api/analyses", handleCreateAnalysisRoute);
   app.get("/api/analyses/active", handleGetActiveAnalysisRoute);
   app.post("/api/analyses/save", handleSaveAnalysisRoute);
   app.post("/api/analyses/step", handleUpdateStepRoute);
+  app.post("/api/analyses/validate", handleValidateAnalysisRoute);
 
   // AI guidance
   app.post("/api/ai-guidance", handleAiGuidanceRoute);

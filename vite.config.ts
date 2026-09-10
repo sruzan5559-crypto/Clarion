@@ -261,10 +261,12 @@ function vitePluginApiRoutes(): Plugin {
 
             // ── Settings & Profile ───────────────────────────────────────
             if (pathname === "/api/settings" && method === "GET") {
-              return json200({ success: true, data: db.getSettings() });
+              const settings = db.getSettings();
+              return json200({ success: true, data: { ...settings, api_key: "", api_key_configured: Boolean(settings.api_key) } });
             }
             if (pathname === "/api/settings" && method === "PUT") {
-              return json200({ success: true, data: db.updateSettings(body) });
+              const settings = db.updateSettings(body);
+              return json200({ success: true, data: { ...settings, api_key: "", api_key_configured: Boolean(settings.api_key) } });
             }
             if (pathname === "/api/user-profile" && method === "GET") {
               return json200({ success: true, data: db.getUserProfile() });
@@ -354,6 +356,17 @@ function vitePluginApiRoutes(): Plugin {
             }
 
             // ── Analyses ─────────────────────────────────────────────────
+            if (pathname === "/api/analyses" && method === "POST") {
+              try {
+                const data = await api.createAnalysis(body);
+                return json200({ success: true, data });
+              } catch (error: any) {
+                const message = error?.message || "Analysis failed.";
+                res.writeHead(message.includes("Select a project") || message.includes("cannot be empty") ? 400 : 502, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: false, error: message }));
+                return;
+              }
+            }
             if (pathname === "/api/analyses/active" && method === "GET") {
               const projectIdStr = urlObj.searchParams.get("projectId");
               const projectId = projectIdStr ? parseInt(projectIdStr, 10) : undefined;
@@ -397,6 +410,16 @@ function vitePluginApiRoutes(): Plugin {
               if (!projectId || !step) return json400("Missing projectId or step");
               db.updateAnalysisStep(Number(projectId), Number(step));
               return json200({ success: true, step });
+            }
+
+            if (pathname === "/api/analyses/validate" && method === "POST") {
+              const { projectId, decision, answers, findings } = body;
+              const active = db.getActiveAnalysis(Number(projectId));
+              if (!projectId || !active?.results_json) return json400("Complete analysis before validating findings.");
+              if (decision !== "confirmed" && decision !== "rejected") return json400("Validation decision must be confirmed or rejected.");
+              const result = { ...JSON.parse(active.results_json), validationReview: { decision, answers: answers || {}, findings: findings || {}, reviewedAt: new Date().toISOString() } };
+              const row = db.saveAnalysis(Number(projectId), active.input_type, active.raw_input, active.file_name, decision === "confirmed" ? 4 : 3, decision === "confirmed" ? "validated" : "needs_review", result);
+              return json200({ success: true, data: { id: row.id, currentStep: row.step, status: row.status, analysisResult: result } });
             }
 
             // ── AI Guidance ───────────────────────────────────────────────
