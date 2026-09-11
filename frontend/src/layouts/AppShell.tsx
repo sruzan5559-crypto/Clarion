@@ -12,9 +12,9 @@ import {
 import { Logo, Button, Badge, ProgressBar, Toast, PageHeader, StatCard, WorkflowVisualization } from "../components/shared";
 
 function Sidebar({ path, collapsed, onToggle, mobileOpen, onMobileClose, navigate }: { path: string; collapsed: boolean; onToggle: () => void; mobileOpen: boolean; onMobileClose: () => void; navigate: (path: string) => void }) {
-  const [customerExpanded, setCustomerExpanded] = useState(true);
-  const [requirementsExpanded, setRequirementsExpanded] = useState(true);
-  const isRequirement = path.startsWith("/requirement") || path === "/requirements-list" || path === "/clarifications";
+  const isRequirement = path.startsWith("/requirements") || path.startsWith("/requirement-") || path === "/requirement-intelligence" || path === "/requirement-analysis" || path === "/requirements-list" || path === "/clarifications";
+  const [customerExpanded, setCustomerExpanded] = useState(!isRequirement);
+  const [requirementsExpanded, setRequirementsExpanded] = useState(isRequirement);
 
   const { data: metrics } = useQuery({
     queryKey: ["metrics"],
@@ -35,29 +35,29 @@ function Sidebar({ path, collapsed, onToggle, mobileOpen, onMobileClose, navigat
   });
 
   const customerNav = [
-    { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-    { label: "New Analysis", path: "/discovery", icon: Sparkles },
-    { label: "Projects", path: "/projects", icon: FolderKanban },
-    { label: "Discovery Requirements", path: "/discovery-requirements", icon: ClipboardList },
-    { label: "Questions", path: "/questions", icon: MessageCircleQuestion, badge: metrics?.unansweredQuestions ? String(metrics.unansweredQuestions) : "4" },
-    { label: "Reports", path: "/reports", icon: FileText },
-    { label: "Intelligence", path: "/intelligence", icon: BarChart3 },
+    { label: "Dashboard", path: "/discovery/dashboard", icon: LayoutDashboard },
+    { label: "New Analysis", path: "/discovery/new-analysis", icon: Sparkles },
+    { label: "Projects", path: "/discovery/projects", icon: FolderKanban },
+    { label: "Discovery Requirements", path: "/discovery/requirements", icon: ClipboardList },
+    { label: "Questions", path: "/discovery/questions", icon: MessageCircleQuestion, badge: metrics?.unansweredQuestions ? String(metrics.unansweredQuestions) : "4" },
+    { label: "Reports", path: "/discovery/reports", icon: FileText },
+    { label: "Intelligence", path: "/discovery/intelligence", icon: BarChart3 },
   ];
 
   const requirementNav = [
-    { label: "Dashboard", path: "/requirement-intelligence", icon: LayoutDashboard },
-    { label: "New Requirement Analysis", path: "/requirement-analysis", icon: Sparkles },
-    { label: "Requirements", path: "/requirements-list", icon: FolderKanban },
-    { label: "Clarifications", path: "/clarifications", icon: MessageCircleQuestion, badge: metrics?.openClarifications ? String(metrics.openClarifications) : "3" },
-    { label: "Issues", path: "/requirement-issues", icon: AlertCircle, badge: metrics?.openIssues ? String(metrics.openIssues) : "4" },
-    { label: "Reports", path: "/requirement-reports", icon: FileText },
-    { label: "Intelligence", path: "/requirement-intelligence/analytics", icon: BarChart3 },
+    { label: "Dashboard", path: "/requirements/dashboard", icon: LayoutDashboard },
+    { label: "New Requirement Analysis", path: "/requirements/new-analysis", icon: Sparkles },
+    { label: "Requirements", path: "/requirements/list", icon: FolderKanban },
+    { label: "Clarifications", path: "/requirements/clarifications", icon: MessageCircleQuestion, badge: metrics?.openClarifications ? String(metrics.openClarifications) : "3" },
+    { label: "Issues", path: "/requirements/issues", icon: AlertCircle, badge: metrics?.openIssues ? String(metrics.openIssues) : "4" },
+    { label: "Reports", path: "/requirements/reports", icon: FileText },
+    { label: "Intelligence", path: "/requirements/intelligence", icon: BarChart3 },
   ];
 
   const renderNav = (items: typeof customerNav) => (
     <div className="nav-list">
       {items.map(({ label, path: itemPath, icon: Icon, badge }) => {
-        const active = path === itemPath || (itemPath === "/projects" && path.startsWith("/projects/"));
+        const active = path === itemPath || (itemPath === "/discovery/projects" && (path === "/projects" || path.startsWith("/projects/")));
         return (
           <button
             key={itemPath}
@@ -138,7 +138,7 @@ function Sidebar({ path, collapsed, onToggle, mobileOpen, onMobileClose, navigat
               ? `CLARIVON AI found ${metrics?.openClarifications ?? 3} open clarifications in your active project.`
               : `CLARIVON AI found ${metrics?.openIssues ?? 4} context gaps in your active project.`}
           </span>
-          <button onClick={() => navigate(isRequirement ? "/clarifications" : "/discovery")}>
+          <button onClick={() => navigate(isRequirement ? "/requirements/clarifications" : "/discovery/requirements")}>
             {isRequirement ? "Review clarifications" : "Review gaps"} <ArrowRight size={13} />
           </button>
         </div>
@@ -208,7 +208,7 @@ function AppShell({ path, navigate, children, onToast }: { path: string; navigat
     <div className="app-shell">
       <Sidebar path={path} collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} navigate={navigate} />
       <div className={`app-main ${collapsed ? "sidebar-collapsed" : ""}`}>
-        <Topbar title={path.startsWith("/requirement") || path === "/requirements-list" || path === "/clarifications" ? "Requirement Intelligence" : "Customer Discovery"} onMenu={() => setMobileOpen(true)} navigate={navigate} onToast={onToast} />
+        <Topbar title={path.startsWith("/requirements") || path.startsWith("/requirement-") || path === "/requirement-intelligence" || path === "/requirement-analysis" || path === "/requirements-list" || path === "/clarifications" ? "Requirement Intelligence" : "Customer Discovery"} onMenu={() => setMobileOpen(true)} navigate={navigate} onToast={onToast} />
         <div className="page-content">{children}</div>
       </div>
     </div>

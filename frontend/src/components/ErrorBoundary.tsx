@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowRight, RotateCcw } from "lucide-react";
 import { Component, ReactNode } from "react";
 
 interface Props {
@@ -18,6 +18,7 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): State {
+    if (import.meta.env.DEV) console.error("CLARIVON page error:", error);
     return { hasError: true, error };
   }
 
@@ -31,13 +32,8 @@ class ErrorBoundary extends Component<Props, State> {
               className="text-destructive mb-6 flex-shrink-0"
             />
 
-            <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
-
-            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
-              <pre className="text-sm text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
-              </pre>
-            </div>
+            <h2 className="text-xl mb-4">Something went wrong while loading this page.</h2>
+            <p className="text-muted-foreground mb-6">Please retry or return to your dashboard.</p>
 
             <button
               onClick={() => window.location.reload()}
@@ -48,7 +44,13 @@ class ErrorBoundary extends Component<Props, State> {
               )}
             >
               <RotateCcw size={16} />
-              Reload Page
+              Try again
+            </button>
+            <button
+              onClick={() => { window.history.pushState({}, "", "/discovery/dashboard"); window.dispatchEvent(new PopStateEvent("popstate")); this.setState({ hasError: false, error: null }); }}
+              className="flex items-center gap-2 px-4 py-2 mt-3 rounded-lg text-muted-foreground hover:opacity-80 cursor-pointer"
+            >
+              Go to Dashboard <ArrowRight size={16} />
             </button>
           </div>
         </div>

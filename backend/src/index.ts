@@ -20,6 +20,7 @@ import {
   handleSaveAnalysisRoute,
   handleUpdateStepRoute,
   handleValidateAnalysisRoute,
+  handleSaveAnalysisReviewRoute,
   // AI
   handleAiGuidanceRoute,
   // Requirements
@@ -84,6 +85,7 @@ async function startServer() {
   app.post("/api/analyses/save", handleSaveAnalysisRoute);
   app.post("/api/analyses/step", handleUpdateStepRoute);
   app.post("/api/analyses/validate", handleValidateAnalysisRoute);
+  app.post("/api/analyses/review", handleSaveAnalysisReviewRoute);
 
   // AI guidance
   app.post("/api/ai-guidance", handleAiGuidanceRoute);

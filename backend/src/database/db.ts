@@ -549,7 +549,7 @@ export function saveAnalysis(
   const jsonStr = resultsJson ? JSON.stringify(resultsJson) : null;
   const now = new Date().toISOString();
 
-  if (existing && existing.project_id === projectId && existing.status !== "saved") {
+  if (existing && existing.project_id === projectId && existing.input_type === inputType && existing.status !== "saved") {
     db.prepare(`
       UPDATE analyses
       SET input_type=?, raw_input=?, file_name=?, step=?, status=?, results_json=?, updated_at=?
@@ -566,12 +566,12 @@ export function saveAnalysis(
   return getActiveAnalysis(projectId)!;
 }
 
-export function updateAnalysisStep(projectId: number, step: number): void {
+export function updateAnalysisStep(projectId: number, step: number, status?: string): void {
   db.prepare(`
     UPDATE analyses
-    SET step=?, updated_at=?
+    SET step=?, status=COALESCE(?, status), updated_at=?
     WHERE project_id=? AND id=(SELECT max(id) FROM analyses WHERE project_id=?)
-  `).run(step, new Date().toISOString(), projectId, projectId);
+  `).run(step, status || null, new Date().toISOString(), projectId, projectId);
 }
 
 // ─── Requirements ────────────────────────────────────────────────────────────

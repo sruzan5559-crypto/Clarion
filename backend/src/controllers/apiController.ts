@@ -162,9 +162,13 @@ function toPresentationAnalysis(structured: StructuredAnalysis, inputType: strin
 export async function handleRequirementAiRoute(req: Request, res: Response) {
   try {
     const content = req.body?.content;
+    const projectId = Number(req.body?.projectId);
     if (!content || typeof content !== "string" || !content.trim()) return res.status(400).json({ success: false, error: "Requirement input cannot be empty." });
     const result = await analyzeRequirementInput(content.trim());
-    return res.json({ success: true, data: result.data, provider: result.provider });
+    const saved = projectId && getProjectById(projectId)
+      ? saveAnalysis(projectId, req.body?.sourceType || "Requirement Analysis", content.trim(), undefined, 3, "discovered", result.data)
+      : null;
+    return res.json({ success: true, data: result.data, provider: result.provider, analysisId: saved?.id || null, currentStep: saved?.step || 3 });
   } catch (err: any) {
     return res.status(502).json({ success: false, error: err?.message || "Requirement analysis failed." });
   }
@@ -342,15 +346,15 @@ export async function handleSaveAnalysisRoute(req: Request, res: Response) {
 
 export async function handleUpdateStepRoute(req: Request, res: Response) {
   try {
-    const { projectId, step } = req.body || {};
+    const { projectId, step, status } = req.body || {};
     if (!projectId || !step) return res.status(400).json({ success: false, error: "Missing projectId or step" });
     const analysis = getActiveAnalysis(Number(projectId));
     if (!analysis) return res.status(409).json({ success: false, error: "Analyze customer input before changing workflow steps." });
     if (Number(step) < 1 || Number(step) > 4 || Number(step) > analysis.step + 1) {
       return res.status(409).json({ success: false, error: "Complete the current discovery step before moving forward." });
     }
-    updateAnalysisStep(Number(projectId), Number(step));
-    return res.json({ success: true, step });
+    updateAnalysisStep(Number(projectId), Number(step), status);
+    return res.json({ success: true, step, status: status || analysis.status });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "Failed to update step." });
   }
@@ -368,6 +372,33 @@ export async function handleValidateAnalysisRoute(req: Request, res: Response) {
     return res.json({ success: true, data: { id: row.id, currentStep: row.step, status: row.status, analysisResult: result } });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "Failed to save validation." });
+  }
+}
+
+export async function handleSaveAnalysisReviewRoute(req: Request, res: Response) {
+  try {
+    const { projectId, answers, findings } = req.body || {};
+    const project = Number(projectId);
+    const active = getActiveAnalysis(project);
+    if (!project || !active?.results_json) return res.status(409).json({ success: false, error: "Complete analysis before saving findings." });
+    const existing = JSON.parse(active.results_json);
+    const nextFindings = findings || {};
+    const result = {
+      ...existing,
+      ...nextFindings,
+      stated: nextFindings.statedProblems || existing.stated,
+      root: nextFindings.rootProblems || existing.root,
+      validationReview: {
+        ...(existing.validationReview || {}),
+        answers: answers || existing.validationReview?.answers || {},
+        findings: nextFindings,
+        reviewedAt: new Date().toISOString(),
+      },
+    };
+    const row = saveAnalysis(project, active.input_type, active.raw_input, active.file_name, 3, "discovered", result);
+    return res.json({ success: true, data: { id: row.id, currentStep: row.step, status: row.status, analysisResult: result } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to save review." });
   }
 }
 

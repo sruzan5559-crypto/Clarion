@@ -288,6 +288,14 @@ function DiscoveryPage({ onToast }: { onToast: (message: string) => void }) {
   // Sync state with active analysis from DB
   useEffect(() => {
     if (activeAnalysis) {
+      const isDiscoveryResult = Boolean(activeAnalysis.analysis_result?.goal || activeAnalysis.analysis_result?.statedProblems || activeAnalysis.analysis_result?.rootProblems);
+      if (activeAnalysis.analysis_result && !isDiscoveryResult) {
+        setAnalysisResult(null);
+        setStatus("idle");
+        setSaved(false);
+        setCurrentStep(1);
+        return;
+      }
       if (activeAnalysis.current_step) {
         setCurrentStep(activeAnalysis.current_step);
       }
@@ -882,13 +890,45 @@ function AnalysisResults({
   onWorkflowUpdated: (data: any) => void;
   onReset: () => void;
 }) {
+  const asTuple = (item: any, keys: string[]) => Array.isArray(item) ? item : keys.map((key) => item?.[key] || "");
+  data = {
+    ...data,
+    evidence: (data?.evidence || []).map((item: any) => asTuple(item, ["quote", "interpretation"])),
+    missing: (data?.missing || data?.missingContext || []).map((item: any) => asTuple(item, ["title", "description", "priority"])),
+    conflicts: (data?.conflicts || []).map((item: any) => asTuple(item, ["topic", "description", "impact"])),
+    requirements: (data?.requirements || []).map((item: any) => asTuple(item, ["title", "description", "priority", "category"])),
+    questions: (data?.questions || data?.followUpQuestions || []).map((item: any) => asTuple(item, ["question", "priority", "purpose"])),
+  };
   const [review, setReview] = useState({
     goal: data?.goal || "",
     statedProblems: data?.statedProblems || data?.stated || "",
     rootProblems: data?.rootProblems || data?.root || "",
   });
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [editingFinding, setEditingFinding] = useState<string | null>(null);
+  const [isSavingReview, setIsSavingReview] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
+
+  const saveReview = async (nextAnswers = answers) => {
+    if (!projectId) return;
+    setIsSavingReview(true);
+    try {
+      const response = await fetch("/api/analyses/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, answers: nextAnswers, findings: review }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.success) throw new Error(json.error || `Could not save review (${response.status}).`);
+      onWorkflowUpdated(json.data);
+      setEditingFinding(null);
+      onToast("Review changes saved.");
+    } catch (error: any) {
+      onToast(error?.message || "Could not save review changes.");
+    } finally {
+      setIsSavingReview(false);
+    }
+  };
 
   const submitValidation = async (decision: "confirmed" | "rejected") => {
     if (!projectId) return;
@@ -963,33 +1003,56 @@ function AnalysisResults({
 
       {currentStep === 3 && (
         <section className="surface-card review-panel">
-          <div className="card-heading compact">
-            <div>
+          <div className="review-panel-header">
+            <div className="review-panel-copy">
               <span className="card-kicker">DISCOVER · REVIEW FINDINGS</span>
               <h3>Edit and validate what CLARIVON found</h3>
               <p>Correct the core findings, answer the follow-up questions, then confirm or reject this discovery.</p>
             </div>
-            <div className="results-actions">
+            <div className="review-panel-actions">
               <Button variant="secondary" disabled={isValidating} onClick={() => submitValidation("rejected")}><X size={15} /> Reject</Button>
               <Button disabled={isValidating} onClick={() => submitValidation("confirmed")}>{isValidating ? "Saving..." : <><Check size={15} /> Confirm findings</>}</Button>
             </div>
           </div>
-          <div className="review-fields">
+          <div className="review-findings-grid">
             {[
-              ["Customer goal", "goal"],
-              ["Stated problem", "statedProblems"],
-              ["Root problem", "rootProblems"],
-            ].map(([label, key]) => (
-              <label key={key}>
-                <span>{label}</span>
-                <textarea value={review[key as keyof typeof review]} onChange={(event) => setReview((previous) => ({ ...previous, [key]: event.target.value }))} rows={2} />
-              </label>
-            ))}
+              ["Customer goal", "goal", review.goal],
+              ["Stated problem", "statedProblems", review.statedProblems],
+              ["Root problem", "rootProblems", review.rootProblems],
+            ].map(([label, key, value]) => {
+              const isEditing = editingFinding === key;
+              return (
+                <article className="review-finding-card" key={key}>
+                  <div className="review-finding-card-head">
+                    <span className="card-kicker">{label}</span>
+                    <button className="review-edit-button" type="button" onClick={() => isEditing ? saveReview() : setEditingFinding(key)} aria-label={`${isEditing ? "Save" : "Edit"} ${label}`}>
+                      {isEditing ? <Check size={14} /> : <Pencil size={14} />}
+                      <span>{isEditing ? (isSavingReview ? "Saving..." : "Save") : "Edit"}</span>
+                    </button>
+                  </div>
+                  {isEditing ? (
+                    <textarea className="review-finding-input" value={value as string} onChange={(event) => setReview((previous) => ({ ...previous, [key]: event.target.value }))} rows={5} autoFocus />
+                  ) : (
+                    <p className="review-finding-value">{value || "No finding was returned."}</p>
+                  )}
+                </article>
+              );
+            })}
           </div>
-          <div className="review-questions">
+          <div className="review-question-section">
             {(data?.followUpQuestions || data?.questions || []).map((item: any, index: number) => {
               const question = Array.isArray(item) ? item[0] : item.question;
-              return <label key={question}><span>Answer {index + 1}: {question}</span><input value={answers[question] || ""} onChange={(event) => setAnswers((previous) => ({ ...previous, [question]: event.target.value }))} placeholder="Add an answer or leave open" /></label>;
+              const answer = answers[question] || "";
+              return (
+                <div className="review-question-row" key={question}>
+                  <div className="review-question-copy">
+                    <span className="card-kicker">FOLLOW-UP QUESTION {index + 1}</span>
+                    <p>{question}</p>
+                  </div>
+                  <textarea value={answer} onChange={(event) => setAnswers((previous) => ({ ...previous, [question]: event.target.value }))} placeholder="Add an answer or leave it for later..." rows={3} />
+                  <Button variant="secondary" disabled={isSavingReview} onClick={() => saveReview({ ...answers, [question]: answer })}>Save answer</Button>
+                </div>
+              );
             })}
           </div>
         </section>

@@ -14,9 +14,9 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { IntelligencePage } from "./pages/IntelligencePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { NewRequirementAnalysisPage as RequirementAnalysisPage } from "./pages/NewRequirementAnalysisPage";
 import {
   RequirementDashboard,
-  RequirementAnalysisPage,
   RequirementsListPage,
   ClarificationsPage,
   IssuesPage,
@@ -36,21 +36,21 @@ export default function App() {
     if (path === "/") return <LandingPage navigate={navigate} />;
     if (path === "/signin") return <AuthPage mode="signin" navigate={navigate} />;
     if (path === "/signup") return <AuthPage mode="signup" navigate={navigate} />;
-    if (path === "/dashboard") return <DashboardPage navigate={navigate} />;
-    if (path === "/requirement-intelligence") return <RequirementDashboard navigate={navigate} onToast={showToast} />;
-    if (path === "/requirement-analysis") return <RequirementAnalysisPage onToast={showToast} />;
-    if (path === "/requirements-list") return <RequirementsListPage onToast={showToast} />;
-    if (path === "/clarifications") return <ClarificationsPage onToast={showToast} />;
-    if (path === "/requirement-issues") return <IssuesPage onToast={showToast} />;
-    if (path === "/requirement-reports") return <RequirementReportsPage onToast={showToast} />;
-    if (path === "/requirement-intelligence/analytics") return <RequirementAnalyticsPage />;
-    if (path === "/discovery") return <DiscoveryPage onToast={showToast} />;
-    if (path === "/projects") return <ProjectsPage navigate={navigate} onToast={showToast} />;
+    if (path === "/dashboard" || path === "/discovery/dashboard") return <DashboardPage navigate={navigate} />;
+    if (path === "/requirement-intelligence" || path === "/requirements/dashboard") return <RequirementDashboard navigate={navigate} onToast={showToast} />;
+    if (path === "/requirement-analysis" || path === "/requirements/new-analysis") return <RequirementAnalysisPage onToast={showToast} />;
+    if (path === "/requirements-list" || path === "/requirements/list") return <RequirementsListPage onToast={showToast} />;
+    if (path === "/clarifications" || path === "/requirements/clarifications") return <ClarificationsPage onToast={showToast} />;
+    if (path === "/requirement-issues" || path === "/requirements/issues") return <IssuesPage onToast={showToast} />;
+    if (path === "/requirement-reports" || path === "/requirements/reports") return <RequirementReportsPage onToast={showToast} />;
+    if (path === "/requirement-intelligence/analytics" || path === "/requirements/intelligence") return <RequirementAnalyticsPage />;
+    if (path === "/discovery" || path === "/discovery/new-analysis") return <DiscoveryPage onToast={showToast} />;
+    if (path === "/projects" || path === "/discovery/projects") return <ProjectsPage navigate={navigate} onToast={showToast} />;
     if (path.startsWith("/projects/")) return <ProjectDetailPage navigate={navigate} onToast={showToast} />;
-    if (path === "/discovery-requirements") return <RequirementsPage onToast={showToast} />;
-    if (path === "/questions") return <QuestionsPage onToast={showToast} />;
-    if (path === "/reports") return <ReportsPage onToast={showToast} />;
-    if (path === "/intelligence") return <IntelligencePage onToast={showToast} />;
+    if (path === "/discovery-requirements" || path === "/discovery/requirements") return <RequirementsPage onToast={showToast} />;
+    if (path === "/questions" || path === "/discovery/questions") return <QuestionsPage onToast={showToast} />;
+    if (path === "/reports" || path === "/discovery/reports") return <ReportsPage onToast={showToast} />;
+    if (path === "/intelligence" || path === "/discovery/intelligence") return <IntelligencePage onToast={showToast} />;
     if (path === "/settings") return <SettingsPage onToast={showToast} />;
     if (path === "/profile") return <ProfilePage navigate={navigate} onToast={showToast} />;
     return <NotFoundPage navigate={navigate} />;

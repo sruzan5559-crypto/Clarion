@@ -23,9 +23,16 @@ export type StructuredAnalysis = z.infer<typeof StructuredAnalysisSchema>;
 export const RequirementAnalysisSchema = z.object({
   businessNeed: z.string().min(1),
   requirements: z.array(z.object({ title: z.string(), description: z.string(), category: z.string(), priority: z.string(), confidence: z.number().min(0).max(100) })).min(1),
+  functionalRequirements: z.array(z.string()),
+  nonFunctionalRequirements: z.array(z.string()),
+  businessRules: z.array(z.string()),
+  actors: z.array(z.string()),
   ambiguities: z.array(z.object({ title: z.string(), description: z.string(), priority: z.string() })),
   missingInformation: z.array(z.object({ title: z.string(), question: z.string(), priority: z.string() })),
   conflicts: z.array(z.object({ topic: z.string(), description: z.string(), impact: z.string() })),
+  risks: z.array(z.string()),
+  dependencies: z.array(z.string()),
+  edgeCases: z.array(z.string()),
   acceptanceCriteria: z.array(z.string()).min(1),
   followUpQuestions: z.array(z.string()).min(1),
   confidence: z.number().min(0).max(100),
@@ -150,7 +157,7 @@ export async function analyzeCustomerInput(inputType: string, content: string) {
 }
 
 export async function analyzeRequirementInput(content: string) {
-  const result = await runStructured(`Analyze this product or business request. Return JSON only with exactly these fields and types: {"businessNeed":string,"requirements":[{"title":string,"description":string,"category":string,"priority":string,"confidence":number}],"ambiguities":[{"title":string,"description":string,"priority":string}],"missingInformation":[{"title":string,"question":string,"priority":string}],"conflicts":[{"topic":string,"description":string,"impact":string}],"acceptanceCriteria":string[],"followUpQuestions":string[],"confidence":number}. Include at least one requirement, acceptance criterion, and follow-up question. Ground every recommendation in the input.\n\nINPUT:\n${content}`, RequirementAnalysisSchema);
+  const result = await runStructured(`Analyze this product or business request. Return JSON only with exactly these fields and types: {"businessNeed":string,"requirements":[{"title":string,"description":string,"category":string,"priority":string,"confidence":number}],"functionalRequirements":string[],"nonFunctionalRequirements":string[],"businessRules":string[],"actors":string[],"ambiguities":[{"title":string,"description":string,"priority":string}],"missingInformation":[{"title":string,"question":string,"priority":string}],"conflicts":[{"topic":string,"description":string,"impact":string}],"risks":string[],"dependencies":string[],"edgeCases":string[],"acceptanceCriteria":string[],"followUpQuestions":string[],"confidence":number}. Include at least one requirement, acceptance criterion, and follow-up question. Ground every recommendation in the input.\n\nINPUT:\n${content}`, RequirementAnalysisSchema);
   if (result.data.confidence <= 1) result.data.confidence *= 100;
   for (const requirement of result.data.requirements) {
     if (requirement.confidence <= 1) requirement.confidence *= 100;

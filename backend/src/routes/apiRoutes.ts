@@ -21,6 +21,7 @@ import {
   handleSaveAnalysisRoute,
   handleUpdateStepRoute,
   handleValidateAnalysisRoute,
+  handleSaveAnalysisReviewRoute,
   // AI
   handleAiGuidanceRoute,
   // Requirements
@@ -80,6 +81,7 @@ router.get("/analyses/active", handleGetActiveAnalysisRoute);
 router.post("/analyses/save", handleSaveAnalysisRoute);
 router.post("/analyses/step", handleUpdateStepRoute);
 router.post("/analyses/validate", handleValidateAnalysisRoute);
+router.post("/analyses/review", handleSaveAnalysisReviewRoute);
 
 // AI guidance
 router.post("/ai-guidance", handleAiGuidanceRoute);
